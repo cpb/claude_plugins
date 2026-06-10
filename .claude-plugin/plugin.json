@@ -1,0 +1,12 @@
+{
+  "name": "cpb-dev-workflow",
+  "displayName": "CPB Dev Workflow",
+  "description": "GitHub workflow skills and worktree tooling: start-pr, continue-pr, finish-pr, qa-pr, new-issue, hill-first, research-pr, kaizen-handoff, verify, init",
+  "version": "1.0.0",
+  "author": {
+    "name": "Caleb Buxton",
+    "url": "https://github.com/cpb"
+  },
+  "repository": "https://github.com/cpb/claude_plugins",
+  "license": "MIT"
+}

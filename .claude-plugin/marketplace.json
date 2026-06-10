@@ -1,0 +1,13 @@
+{
+  "name": "cpb",
+  "owner": {
+    "name": "Caleb Buxton",
+    "email": "caleb@cpb.ca"
+  },
+  "plugins": [
+    {
+      "name": "cpb-dev-workflow",
+      "source": { "source": "github", "repo": "cpb/claude_plugins" }
+    }
+  ]
+}
