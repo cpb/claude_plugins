@@ -52,10 +52,11 @@ The workflow skills rely on three conventions your project must implement:
 |---|---|---|
 | `bin/setup` | `bin/worktree add` | Set up a new worktree (install deps, prepare DB, etc.) |
 | `bin/dev` | `bin/worktree server` | Start the development server on `$PORT` |
-| `bin/check-worktree` | Hook (PreToolUse) | Block edits on main branch (project-editable copy) |
-| `bin/claude-code-web-setup` | Hook (PreToolUse, remote only) | Install deps before tool calls in web sessions |
+| `bin/check-worktree` | Hook (PreToolUse) | Block edits on main branch — editable; plugin provides generic fallback |
+| `bin/claude-code-web-setup` | Hook (PreToolUse, remote only) | Install deps in web sessions — editable; plugin provides no-op fallback |
+| `bin/lint` | Hook (PostToolUse) | Auto-format edited files — editable; no plugin default |
 
-Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree` and `bin/claude-code-web-setup` as editable starters.
+Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, and `bin/lint` as editable starters.
 
 ### bin/setup
 
@@ -87,15 +88,31 @@ The plugin ships a no-op skeleton. After running `/cpb-dev-workflow:init`, imple
 
 ## Hooks
 
-The plugin registers three hooks via `hooks/hooks.json`:
+The plugin registers three hooks via `hooks/hooks.json`, each dispatching to a project-owned script:
 
-| Hook | Trigger | Behavior |
-|---|---|---|
-| PreToolUse | All tools | Runs `./bin/check-worktree` if present, otherwise falls back to the plugin's version — blocks edits on main branch |
-| PreToolUse | Edit/Write (remote only) | Runs `./bin/claude-code-web-setup` if present, otherwise falls back to the plugin's no-op skeleton |
-| PostToolUse | Edit/Write | Runs `hk fix` if `hk` is on PATH and `.hk.toml` exists in the project root; no-op otherwise |
+| Hook | Trigger | Project script | Behavior when missing |
+|---|---|---|---|
+| PreToolUse | All tools | `bin/check-worktree` | Falls back to plugin's generic version |
+| PreToolUse | Edit/Write (remote only) | `bin/claude-code-web-setup` | Falls back to plugin's no-op skeleton |
+| PostToolUse | Edit/Write | `bin/lint` | Silent no-op (no plugin default) |
 
-Hook commands use `${CLAUDE_PLUGIN_ROOT}` for the plugin fallback and `${CLAUDE_PROJECT_DIR}` for the project-local override — the plugin's `bin/` is **only** added to the Bash tool's PATH, not to hook execution environments. Run `/cpb-dev-workflow:init` to install editable copies of the check-worktree and web-setup scripts into your project's `./bin/`.
+Each hook's only guard is whether the project script exists. No other conditions are checked — put project-specific guards (tool availability, config file presence, etc.) inside the script itself.
+
+The plugin's `bin/` is added to the **Bash tool's PATH only** — hook processes use `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PROJECT_DIR}` for path resolution. Run `/cpb-dev-workflow:init` to install editable copies of all three scripts into your project's `./bin/`.
+
+### bin/lint
+
+`bin/lint` is the project's PostToolUse formatting hook. `$CLAUDE_FILE_PATHS` is available as an environment variable containing the space-separated paths of files modified by the tool call.
+
+`/cpb-dev-workflow:init` creates this boilerplate:
+
+```bash
+#!/usr/bin/env bash
+# Default: hk fix — replace with your project's formatter
+HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS
+```
+
+Replace the body with whatever your project uses: `prettier --write`, `rubocop --autocorrect`, `ruff check --fix`, etc.
 
 ## Worktree commands
 

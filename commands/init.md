@@ -1,9 +1,9 @@
 ---
-description: Scaffold the project-specific files needed to use cpb-dev-workflow in a new project
+description: Scaffold the project-specific hook scripts needed to use cpb-dev-workflow in a new project
 argument-hint: [--force]
 ---
 
-Set up a new project to use the cpb-dev-workflow plugin by creating the required bin/ scripts and documenting what to customize.
+Set up a new project to use the cpb-dev-workflow plugin by creating editable hook scripts in bin/ and documenting what to customize.
 
 ## Steps
 
@@ -17,13 +17,13 @@ Abort if this is not a git repository.
 
 **2. Check for existing files**
 
-Check which of these already exist: `bin/worktree`, `bin/check-worktree`, `bin/claude-code-web-setup`, `bin/setup`, `bin/dev`.
+Check which of these already exist: `bin/check-worktree`, `bin/claude-code-web-setup`, `bin/lint`.
 
-If `bin/worktree` already exists and `--force` is not in `$ARGUMENTS`, print:
+If any exist and `--force` is not in `$ARGUMENTS`, print which ones exist and stop:
 ```
-bin/worktree already exists. Pass --force to overwrite.
+The following hook scripts already exist: <list>
+Pass --force to overwrite them.
 ```
-and stop.
 
 **3. Ensure bin/ directory exists**
 
@@ -46,7 +46,7 @@ cp "$(which check-worktree)" bin/check-worktree
 chmod +x bin/check-worktree
 ```
 
-If `which check-worktree` fails, print a warning:
+If `which check-worktree` fails, print a warning and skip:
 ```
 Warning: check-worktree not found on PATH. The plugin's bin/ may not be active.
 Run claude with --plugin-dir or install via /plugin install.
@@ -54,7 +54,7 @@ Run claude with --plugin-dir or install via /plugin install.
 
 **5. Install bin/claude-code-web-setup**
 
-Find the plugin's `claude-code-web-setup` binary:
+Find the plugin's `claude-code-web-setup` binary on PATH:
 
 ```bash
 which claude-code-web-setup
@@ -73,22 +73,46 @@ bin/claude-code-web-setup installed as a no-op skeleton.
 Edit it to add your project's web-session setup (bundle install, npm install, etc.).
 ```
 
-**6. Check for bin/setup and bin/dev**
+**6. Create bin/lint**
+
+Write the following boilerplate to `./bin/lint` and make it executable:
+
+```bash
+#!/usr/bin/env bash
+# PostToolUse hook — called by cpb-dev-workflow after every Edit/Write tool call.
+# $CLAUDE_FILE_PATHS contains the space-separated paths of files that were modified.
+# Implement your project's auto-formatting and linting here.
+#
+# Default: hk fix (https://github.com/jdx/hk)
+#   Requires: hk installed, .hk.toml present at project root
+#
+# Other examples:
+#   prettier --write $CLAUDE_FILE_PATHS
+#   rubocop --autocorrect $CLAUDE_FILE_PATHS
+#   ruff check --fix $CLAUDE_FILE_PATHS
+
+HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS
+```
+
+```bash
+chmod +x bin/lint
+```
+
+**7. Check for bin/setup and bin/dev**
 
 If `bin/setup` does not exist, print:
 ```
-Warning: bin/setup is missing. bin/worktree add will call bin/setup --skip-server after
-creating a new worktree. Create bin/setup to automate dependency installation and database
-setup for new worktrees.
+Warning: bin/setup is missing. bin/worktree add calls bin/setup --skip-server after
+creating a new worktree. Create it to automate dependency installation and database setup.
 ```
 
 If `bin/dev` does not exist, print:
 ```
 Warning: bin/dev is missing. bin/worktree server calls bin/dev to start the development server.
-Create bin/dev (e.g. exec rails server -b 0.0.0.0 -p $PORT) for the server commands to work.
+Create it (e.g. exec rails server -b 0.0.0.0 -p $PORT) for worktree server commands to work.
 ```
 
-**7. Print summary**
+**8. Print summary**
 
 Print a checklist:
 
@@ -96,20 +120,13 @@ Print a checklist:
 cpb-dev-workflow project setup complete.
 
 Created:
-  bin/check-worktree        — enforces worktree-first development (edit to customize)
-  bin/claude-code-web-setup — web session setup skeleton (edit with your project's dependencies)
+  bin/check-worktree        — blocks edits on main branch (edit to customize)
+  bin/claude-code-web-setup — web session setup stub (add your dependency installs)
+  bin/lint                  — PostToolUse formatter (configured for hk — edit for your stack)
 
-Required (create if missing):
+Plugin hooks dispatch to these scripts when they exist. Edit each one to fit your project.
+
+Required for worktree commands (create if missing):
   bin/setup                 — called by `bin/worktree add` to set up a new worktree
   bin/dev                   — called by `bin/worktree server` to start the dev server
-
-Plugin hooks (active when plugin is loaded):
-  PreToolUse  → check-worktree          blocks edits on main branch
-  PreToolUse  → claude-code-web-setup   runs project setup in web sessions
-  PostToolUse → hk fix                  formats edited files (requires hk + .hk.toml)
-
-To use worktree commands, add the plugin's bin/ to your project PATH, or call:
-  worktree add <branch>
-  worktree server <branch>
-  worktree list
 ```

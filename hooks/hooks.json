@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v hk >/dev/null 2>&1 && [ -f \"${CLAUDE_PROJECT_DIR}/.hk.toml\" ] && HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS || true"
+            "command": "if [ -x \"${CLAUDE_PROJECT_DIR}/bin/lint\" ]; then exec \"${CLAUDE_PROJECT_DIR}/bin/lint\"; fi"
           }
         ]
       }
