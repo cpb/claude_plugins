@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "check-worktree"
+            "command": "if [ -x \"${CLAUDE_PROJECT_DIR}/bin/check-worktree\" ]; then exec \"${CLAUDE_PROJECT_DIR}/bin/check-worktree\"; else exec \"${CLAUDE_PLUGIN_ROOT}/bin/check-worktree\"; fi"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"${CLAUDE_CODE_REMOTE:-}\" = true ] || exit 0 && exec claude-code-web-setup"
+            "command": "[ \"${CLAUDE_CODE_REMOTE:-}\" = true ] || exit 0 && if [ -x \"${CLAUDE_PROJECT_DIR}/bin/claude-code-web-setup\" ]; then exec \"${CLAUDE_PROJECT_DIR}/bin/claude-code-web-setup\"; else exec \"${CLAUDE_PLUGIN_ROOT}/bin/claude-code-web-setup\"; fi"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS"
+            "command": "command -v hk >/dev/null 2>&1 && [ -f \"${CLAUDE_PROJECT_DIR}/.hk.toml\" ] && HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS || true"
           }
         ]
       }
