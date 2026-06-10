@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -x \"${CLAUDE_PROJECT_DIR}/bin/lint\" ]; then exec \"${CLAUDE_PROJECT_DIR}/bin/lint\"; fi"
+            "command": "if [ -x \"${CLAUDE_PROJECT_DIR}/bin/lint\" ]; then exec \"${CLAUDE_PROJECT_DIR}/bin/lint\"; else exec \"${CLAUDE_PLUGIN_ROOT}/bin/lint\"; fi"
           }
         ]
       }

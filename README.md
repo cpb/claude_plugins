@@ -54,7 +54,7 @@ The workflow skills rely on three conventions your project must implement:
 | `bin/dev` | `bin/worktree server` | Start the development server on `$PORT` |
 | `bin/check-worktree` | Hook (PreToolUse) | Block edits on main branch — editable; plugin provides generic fallback |
 | `bin/claude-code-web-setup` | Hook (PreToolUse, remote only) | Install deps in web sessions — editable; plugin provides no-op fallback |
-| `bin/lint` | Hook (PostToolUse) | Auto-format edited files — editable; no plugin default |
+| `bin/lint` | Hook (PostToolUse) | Auto-format edited files — editable; plugin provides no-op fallback |
 
 Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, and `bin/lint` as editable starters.
 
@@ -94,7 +94,7 @@ The plugin registers three hooks via `hooks/hooks.json`, each dispatching to a p
 |---|---|---|---|
 | PreToolUse | All tools | `bin/check-worktree` | Falls back to plugin's generic version |
 | PreToolUse | Edit/Write (remote only) | `bin/claude-code-web-setup` | Falls back to plugin's no-op skeleton |
-| PostToolUse | Edit/Write | `bin/lint` | Silent no-op (no plugin default) |
+| PostToolUse | Edit/Write | `bin/lint` | Falls back to plugin's no-op skeleton |
 
 Each hook's only guard is whether the project script exists. No other conditions are checked — put project-specific guards (tool availability, config file presence, etc.) inside the script itself.
 
