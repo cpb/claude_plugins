@@ -41,7 +41,7 @@ Wait for the operator to remove the label, then confirm. Once gone, proceed.
 **3. Launch the harness**
 
 ```bash
-bin/worktree harness "$1" ${2:---}
+bin/worktree harness "$1" ${2:+$2}
 ```
 
 **4. Print a confirmation**

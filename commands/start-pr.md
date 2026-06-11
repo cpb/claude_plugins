@@ -22,7 +22,7 @@ remote_control=$(echo "$session" | jq -r '.remote_control')
 **2. Launch the harness**
 
 ```bash
-bin/worktree harness "$1" ${2:---}
+bin/worktree harness "$1" ${2:+$2}
 ```
 
 **3. Print a confirmation**
