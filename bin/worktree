@@ -730,6 +730,144 @@ def cmd_list(_args)
   end
 end
 
+# ── heal-ci subcommands ────────────────────────────────────────────────────────
+
+HEAL_STATE_FILE = "/tmp/heal-ci-state.json"
+HEAL_MAX_ATTEMPTS = 5
+
+def heal_state
+  return {} unless File.exist?(HEAL_STATE_FILE)
+  JSON.parse(File.read(HEAL_STATE_FILE))
+rescue JSON::ParserError
+  {}
+end
+
+def heal_write_state(state)
+  File.write(HEAL_STATE_FILE, JSON.pretty_generate(state))
+end
+
+# Poll CI until settled. Writes state.json with failing job info.
+# Exits 0 = all green, 1 = failures found, 2 = attempt limit reached.
+def cmd_heal_poll(args)
+  pr = args.shift
+  abort "Usage: bin/worktree heal-poll <pr>" unless pr
+
+  state = heal_state
+  if (state["attempt"] || 0) >= HEAL_MAX_ATTEMPTS
+    warn "heal-poll: attempt limit (#{HEAL_MAX_ATTEMPTS}) reached"
+    exit 2
+  end
+
+  puts "→ Waiting for CI on PR ##{pr}..."
+  system("gh pr checks #{pr.shellescape} --watch --interval 10")
+
+  raw, = Open3.capture2("gh pr checks #{pr.shellescape} --json name,state,detailsUrl 2>/dev/null")
+  checks = raw.empty? ? [] : JSON.parse(raw)
+  failures = checks.select { |c| c["state"] == "FAILURE" }
+
+  if failures.empty?
+    # Fallback: parse tabular output for older gh versions
+    tabular, = Open3.capture2("gh pr checks #{pr.shellescape}")
+    if tabular.match?(/\bfail\b/i)
+      puts "→ Detected failures via tabular output (gh --json unsupported or empty)"
+      failures = tabular.lines.select { |l| l.match?(/\bfail\b/i) }.map { |l| { "name" => l.split.first, "detailsUrl" => nil } }
+    end
+  end
+
+  if failures.empty?
+    puts "✓ CI green for PR ##{pr}"
+    heal_write_state(state.merge("pr" => pr, "status" => "green"))
+    exit 0
+  end
+
+  puts "✗ #{failures.size} failing job(s): #{failures.map { |f| f["name"] }.join(", ")}"
+  heal_write_state(state.merge("pr" => pr, "status" => "failing", "failures" => failures))
+  exit 1
+rescue JSON::ParserError => e
+  warn "heal-poll: could not parse gh output — #{e.message}"
+  exit 1
+end
+
+# Detect test framework, run the failing test, write result to state.json.
+# Exits 0 = test passes, 1 = test still failing.
+def cmd_heal_reproduce(args)
+  pr = args.shift
+  test_ref = args.shift  # "path/to/test.rb:42"
+  abort "Usage: bin/worktree heal-reproduce <pr> <file:line>" unless pr && test_ref
+
+  state = heal_state
+
+  # Resolve worktree path
+  info = gh_json("pr view #{pr.shellescape} --json headRefName") || {}
+  branch = info["headRefName"]
+  wt = branch && find_worktree(branch)
+  wt_path = wt&.fetch(:path) || Dir.pwd
+
+  # Detect framework
+  framework = if File.exist?(File.join(wt_path, ".rspec")) || File.directory?(File.join(wt_path, "spec"))
+    "rspec"
+  else
+    "minitest"
+  end
+
+  attempt = state["attempt"] || 0
+  log_file = "/tmp/heal-ci-attempt-#{attempt}.log"
+
+  cmd = if framework == "rspec"
+    "bundle exec rspec #{test_ref.shellescape} --format documentation"
+  else
+    "bin/rails test #{test_ref.shellescape}"
+  end
+
+  puts "→ [attempt #{attempt}] #{framework}: #{cmd}"
+  output, status = Open3.capture2e("cd #{wt_path.shellescape} && #{cmd}")
+  File.write(log_file, output)
+  puts output
+
+  passed = status.success?
+  heal_write_state(state.merge(
+    "framework"   => framework,
+    "wt_path"     => wt_path,
+    "test_ref"    => test_ref,
+    "last_log"    => log_file,
+    "last_passed" => passed
+  ))
+
+  exit passed ? 0 : 1
+end
+
+# Stage a specific file, commit, push. Increments attempt counter.
+# Exits 0 = committed+pushed, 5 = limit reached (do not push).
+def cmd_heal_commit(args)
+  pr      = args.shift
+  file    = args.shift
+  message = args.shift
+  abort "Usage: bin/worktree heal-commit <pr> <file> <message>" unless pr && file && message
+
+  state = heal_state
+  attempt = (state["attempt"] || 0) + 1
+
+  if attempt > HEAL_MAX_ATTEMPTS
+    warn "heal-commit: attempt limit (#{HEAL_MAX_ATTEMPTS}) reached — escalate"
+    heal_write_state(state.merge("attempt" => attempt, "status" => "limit_reached"))
+    exit 5
+  end
+
+  wt_path = state["wt_path"] || Dir.pwd
+  info    = gh_json("pr view #{pr.shellescape} --json headRefName") || {}
+  branch  = info["headRefName"]
+
+  Dir.chdir(wt_path) do
+    system("git add #{file.shellescape}") || abort("git add failed")
+    system("git commit -m #{message.shellescape}") || abort("git commit failed")
+    system("git push origin HEAD:#{branch.shellescape}") || abort("git push failed")
+  end
+
+  heal_write_state(state.merge("attempt" => attempt, "status" => "pushed"))
+  puts "→ Committed and pushed [attempt #{attempt}/#{HEAL_MAX_ATTEMPTS}]"
+  exit 0
+end
+
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
 USAGE = <<~USAGE
@@ -753,6 +891,9 @@ USAGE = <<~USAGE
     down [name]               Stop server and remove worktree
     handoff [id]              Gather PR and git context for session handoff
     list                      Show all worktrees with port and server status
+    heal-poll <pr>            Poll CI; exit 0=green 1=failing 2=limit; write /tmp/heal-ci-state.json
+    heal-reproduce <pr> <f:l> Run the failing test; exit 0=pass 1=fail; update state.json
+    heal-commit <pr> <f> <m>  Stage file, commit, push; increment attempt counter; exit 5 at limit
 USAGE
 
 subcommand = ARGV.shift
@@ -770,6 +911,9 @@ when "down"           then cmd_down(ARGV)
 when "down-children"  then cmd_down_children(ARGV)
 when "handoff"        then cmd_handoff(ARGV)
 when "list"           then cmd_list(ARGV)
+when "heal-poll"      then cmd_heal_poll(ARGV)
+when "heal-reproduce" then cmd_heal_reproduce(ARGV)
+when "heal-commit"    then cmd_heal_commit(ARGV)
 else
   puts USAGE
   exit subcommand.nil? ? 0 : 1
