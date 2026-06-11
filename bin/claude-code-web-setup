@@ -1,9 +1,9 @@
 #!/bin/sh
-# Web session setup hook skeleton — cpb-dev-workflow plugin default (no-op).
+# Web session setup hook skeleton — cpb plugin default (no-op).
 #
 # Called before Edit/Write tool calls in remote Claude Code sessions
 # (when CLAUDE_CODE_REMOTE=true). Copy this to ./bin/claude-code-web-setup
-# in your project (via /cpb-dev-workflow:init) and implement project-specific setup.
+# in your project (via /cpb:init) and implement project-specific setup.
 #
 # Common patterns:
 #   - Install dependencies:   bundle install  /  npm install

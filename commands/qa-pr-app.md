@@ -72,7 +72,7 @@ Based on the item text, run relevant checks and present findings:
 
 **4c. Use the verify skill**
 
-Invoke the `cpb-dev-workflow:verify` skill, passing item text and server context as a multi-line args string:
+Invoke the `cpb:verify` skill, passing item text and server context as a multi-line args string:
 
 ```
 <item text>
