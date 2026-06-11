@@ -47,21 +47,12 @@ def tmux_window_target(wt_path, recorded_window)
   # Fallback to pane path (more strict)
   wt_path = File.realdirpath(wt_path) rescue wt_path
   out, _ = Open3.capture2("tmux list-panes -a -F '\#{session_name}:\#{window_index} \#{pane_current_path}'")
-  
-  # Current target to avoid hijacking unless it's an exact match
-  current_target = `tmux display-message -p "\#{session_name}:\#{window_index}"`.strip rescue nil
 
   target = out.lines.find do |l|
     parts = l.split
     next false if parts.size < 2
     pane_path = File.realdirpath(parts[1]) rescue parts[1]
-    
-    # Exact match or subpath match (ensure it's a real subpath with trailing slash check)
-    match = (pane_path == wt_path || pane_path.start_with?(File.join(wt_path, "")))
-    
-    # Avoid hijacking current window if it's not an exact match and we have other options
-    # But if it matches the path, it's likely the right window even if name changed.
-    match
+    pane_path == wt_path || pane_path.start_with?(File.join(wt_path, ""))
   end&.split&.first
 
   target
@@ -218,49 +209,48 @@ def cmd_prepare(args)
   check_tmux
   id = args.shift
   abort "Usage: bin/worktree prepare <id> [--pr|--issue] [--test-first]" unless id
-  
+
   is_pr = args.delete("--pr")
   is_issue = args.delete("--issue")
   test_first_arg = args.delete("--test-first")
-  
+
   type = is_pr ? "pr" : (is_issue ? "issue" : nil)
-  
+
   info = nil
   if type == "pr" || type.nil?
     info = gh_json("pr view #{id} --json number,title,body,url,labels,state,headRefName")
     type = "pr" if info
   end
-  
+
   if info.nil? && (type == "issue" || type.nil?)
     info = gh_json("issue view #{id} --json number,title,body,url,labels,state")
     type = "issue" if info
   end
-  
+
   abort "Could not find Issue/PR #{id}" unless info
-  
+
   number = info["number"]
   title = info["title"]
   slug = slugify(title)
-  
+
   labels = info["labels"] || []
   hill_ready = labels.any? { |l| l["name"] == "hill-ready" }
   test_first_label = labels.any? { |l| l["name"] == "test-first" }
-  
+
   test_first = test_first_arg || test_first_label
-  
+
   branch = type == "pr" ? info["headRefName"] : "issue-#{number}/#{slug[0..49]}"
   prefix = type == "pr" ? "x" : "o"
-  
+
   rc_slug = slug[0..29]
   remote_control = "#{prefix}-#{number}-#{rc_slug}"
   tmux_window = "#{type}-#{number}"
-  
+
   # Ensure worktree exists
   wt = find_worktree(branch)
   if wt
     wt_path = wt[:path]
   else
-    # Replace slashes in branch name for the directory name to keep it flat
     safe_branch = branch.gsub("/", "_")
     app_name = File.basename(git_root).gsub(/[^a-z0-9_-]/i, "_")
     wt_path = File.expand_path("../../#{app_name}_#{safe_branch}", main_worktree_path)
@@ -273,7 +263,7 @@ def cmd_prepare(args)
     system("tmux new-window -n #{tmux_window.shellescape} -c #{wt_path.shellescape}")
     target = tmux_window
   end
-  
+
   session = {
     remote_control: remote_control,
     tmux_window: tmux_window,
@@ -290,18 +280,30 @@ def cmd_prepare(args)
   File.write(File.join(wt_path, ".worktree-session.json"), JSON.pretty_generate(session))
   File.write(File.join(wt_path, "pr_context.md"), build_pr_context(type, info, test_first: test_first))
 
-  # Output JSON for LLM consumption
   puts JSON.pretty_generate(session.merge(info: info))
 end
 
 def cmd_harness(args)
   check_tmux
+
+  prompt_file_arg = nil
+  if (idx = args.index("--prompt-file"))
+    args.delete_at(idx)
+    prompt_file_arg = args.delete_at(idx)
+  end
+
+  window_name_override = nil
+  if (idx = args.index("--window"))
+    args.delete_at(idx)
+    window_name_override = args.delete_at(idx)
+  end
+
+  use_gemini = args.delete("--gemini")
+  fresh_window = args.delete("--fresh")
+
   id = args.shift
-  use_gemini = args.include?("--gemini")
 
   if id
-    # Precise branch-name prefix match, then session JSON scan by number field.
-    # Never fall back to CWD — fail loudly if id is given but not found.
     wts = worktrees
     wt = wts.find { |w| w[:branch] && (w[:branch] =~ /^(?:refs\/heads\/)?(?:issue|pr)-#{Regexp.escape(id)}(?:\/|$)/ || w[:branch] == id) }
     unless wt
@@ -322,37 +324,52 @@ def cmd_harness(args)
     id = session["number"] if session
   end
 
-  abort "Usage: bin/worktree harness [id]" unless session
-  
-  wt_path = session["worktree_path"]
-  tmux_target = session["tmux_target"] || session["tmux_window"]
-  remote_control = session["remote_control"]
-  type = session["type"]
-  
-  # Final verification of target
-  actual_target = tmux_window_target(wt_path, session["tmux_window"])
-  target = actual_target || tmux_target
+  abort "Usage: bin/worktree harness [id] [--prompt-file <path>] [--window <name>] [--fresh] [--gemini]" unless session
 
-  # Ensure the window exists
-  unless target && system("tmux has-session -t #{target.shellescape} 2>/dev/null")
-    puts "→ Creating new tmux window '#{tmux_target}'..."
-    system("tmux new-window -n #{tmux_target.shellescape} -c #{wt_path.shellescape}")
-    target = tmux_target
-  end
-  
-  if use_gemini
-    cmd = "gemini --skip-trust"
-    cmd += " --approval-mode plan" if type == "issue"
-    cmd += " --prompt-interactive \"$(< pr_context.md)\""
+  wt_path        = session["worktree_path"]
+  tmux_target    = session["tmux_target"] || session["tmux_window"]
+  remote_control = session["remote_control"]
+  type           = session["type"]
+  prompt_file    = prompt_file_arg || File.join(wt_path, "pr_context.md")
+  window_name    = window_name_override || tmux_target
+
+  # --fresh: kill any existing window with this name before creating a new one
+  if fresh_window
+    out, _ = Open3.capture2("tmux list-windows -a -F '\#{session_name}:\#{window_index} \#{window_name}'")
+    out.lines.each do |l|
+      parts = l.split
+      next unless parts.size >= 2 && parts[1] == window_name
+      system("tmux kill-window -t #{parts[0].shellescape}")
+    end
+    sleep 0.2
+    target = nil
   else
-    cmd = "claude --remote-control #{remote_control}"
-    cmd += " --permission-mode plan" if type == "issue"
-    cmd += " \"$(< pr_context.md)\""
+    actual_target = tmux_window_target(wt_path, session["tmux_window"])
+    target = actual_target || tmux_target
   end
-  
-  puts "→ Sending command to tmux window '#{target}':"
-  puts "  #{cmd}"
-  system("tmux send-keys -t #{target.shellescape} #{cmd.shellescape} Enter")
+
+  unless target && system("tmux has-session -t #{target.shellescape} 2>/dev/null")
+    puts "→ Creating new tmux window '#{window_name}'..."
+    system("tmux new-window -n #{window_name.shellescape} -c #{wt_path.shellescape}")
+    target = window_name
+  end
+
+  # Write launcher script — avoids shell-quoting layers when passing prompt through tmux send-keys
+  launcher = "/tmp/harness-#{remote_control}.sh"
+  if use_gemini
+    cmd_str = "exec gemini --skip-trust"
+    cmd_str += " --approval-mode plan" if type == "issue"
+    cmd_str += " --prompt-interactive \"$(< #{Shellwords.escape(prompt_file)})\""
+  else
+    cmd_str = "exec claude --remote-control #{Shellwords.escape(remote_control)}"
+    cmd_str += " --permission-mode plan" if type == "issue"
+    cmd_str += " \"$(< #{Shellwords.escape(prompt_file)})\""
+  end
+  File.write(launcher, "#!/usr/bin/env bash\n#{cmd_str}\n")
+  FileUtils.chmod(0755, launcher)
+
+  puts "→ Launching in tmux window '#{target}' via #{launcher}"
+  system("tmux send-keys -t #{target.shellescape} #{"bash #{launcher}".shellescape} Enter")
 end
 
 def cmd_check_hill(args)
@@ -362,13 +379,13 @@ def cmd_check_hill(args)
     number = session["number"]
   end
   abort "Usage: bin/worktree check-hill [number]" unless number
-  
+
   puts "→ Waiting for CI checks on PR ##{number}..."
   system("gh pr checks #{number} --watch")
-  
+
   checks, _ = Open3.capture2("gh pr checks #{number}")
   info = gh_json("pr view #{number} --json body")
-  
+
   puts "\n--- CI Check Summary ---"
   puts checks
   puts "\n--- PR Description (Expected Failures) ---"
@@ -383,37 +400,34 @@ def cmd_cleanup(args)
     session = JSON.parse(File.read(".worktree-session.json"))
     id ||= session["number"]
   end
-  
+
   abort "Usage: bin/worktree cleanup <id>" unless id
-  
-  # Wait for CI if it's a PR
+
   is_pr = session ? (session["type"] == "pr") : true
   if is_pr
     puts "→ Waiting for CI checks on PR ##{id}..."
     system("gh pr checks #{id} --watch")
-    # We continue even if it fails, as gh pr merge will fail if required checks are red,
-    # or the user can choose to merge anyway if they have permission.
     out, status = Open3.capture2("gh pr checks #{id}")
     unless status.success?
       puts out
       abort "CI failed on PR ##{id}. Fix failures before cleaning up."
     end
   end
-  
+
   unless session
     info = gh_json("pr view #{id} --json number,title,headRefName") || gh_json("issue view #{id} --json number,title")
     abort "Could not find PR/Issue ##{id}" unless info
     session = { "number" => info["number"], "headRefName" => info["headRefName"], "type" => info["headRefName"] ? "pr" : "issue" }
   end
-  
+
   number = session["number"]
   branch = session["headRefName"]
   wt_path = session["worktree_path"] || (branch && find_worktree(branch)&.fetch(:path))
-  
+
   if session["type"] == "pr"
     puts "→ Merging PR ##{number}..."
     system("gh pr merge #{number} --squash") || abort("Merge failed")
-    
+
     if branch
       puts "→ Deleting remote branch #{branch}..."
       system("git push origin --delete #{branch}") rescue nil
@@ -424,7 +438,7 @@ def cmd_cleanup(args)
     puts "→ Updating main in #{main_wt}..."
     system("git -C #{main_wt.shellescape} fetch origin main && git -C #{main_wt.shellescape} merge --ff-only origin/main")
   end
-  
+
   if wt_path
     target = tmux_window_target(wt_path, session["tmux_window"])
     if target
@@ -437,10 +451,10 @@ def cmd_cleanup(args)
         system("tmux kill-window -t #{target.shellescape}")
       end
     end
-    
+
     cmd_down([branch || File.basename(wt_path)])
   end
-  
+
   puts "Done."
 end
 
@@ -528,7 +542,6 @@ def cmd_cd(args)
   end
   abort "Usage: bin/worktree cd [name]" unless name
   wt = find_worktree(name) || abort("No worktree found for '#{name}'")
-  # Print a cd command for eval — cannot change parent shell directory directly.
   puts "cd #{wt[:path]}"
 end
 
@@ -553,7 +566,6 @@ def cmd_server(args)
   pid_file = File.join(wt_path, SERVER_PID)
   port = env_local_port(wt_path) || 3000
 
-  # Spawn detached child — pass PORT explicitly so bin/dev doesn't fall back to 3000
   pid = spawn(
     {"PORT" => port.to_s},
     "bin/dev",
@@ -623,8 +635,6 @@ def cmd_down(args)
   pid_file = File.join(wt_path, SERVER_PID)
   File.delete(pid_file) if File.exist?(pid_file)
 
-  # Run from git_root so this works even when CWD is the worktree being removed
-  # (git refuses to remove its own CWD even with --force).
   puts "→ git worktree remove #{wt_path}"
   out, err, status = Open3.capture3("git -C #{git_root.shellescape} worktree remove --force #{wt_path.shellescape}")
   unless status.success?
@@ -639,8 +649,7 @@ end
 
 def cmd_handoff(args)
   id = args.shift
-  
-  # 1. Resolve PR number
+
   unless id
     session_file = ".worktree-session.json"
     if File.exist?(session_file)
@@ -652,16 +661,14 @@ def cmd_handoff(args)
   end
   id = id.to_s if id
 
-  # 2. Fetch PR info
   info = nil
   if id && !id.empty?
     info = gh_json("pr view #{id} --json number,title,url,body")
   end
 
-  # 3. Git context
   branch = `git branch --show-current`.strip
   base = `git merge-base origin/main HEAD 2>/dev/null || git merge-base main HEAD`.strip
-  
+
   commits = []
   unless base.empty?
     out, _ = Open3.capture2("git log #{base}..HEAD --reverse --oneline")
@@ -674,7 +681,6 @@ def cmd_handoff(args)
     files = out.lines.map(&:strip).uniq
   end
 
-  # 4. Session info
   session = File.exist?(".worktree-session.json") ? JSON.parse(File.read(".worktree-session.json")) : nil
 
   result = {
@@ -700,6 +706,129 @@ def cmd_list(_args)
   end
 end
 
+# ── heal-ci subcommands ────────────────────────────────────────────────────────
+
+HEAL_STATE_FILE = "/tmp/heal-ci-state.json"
+HEAL_MAX_ATTEMPTS = 5
+
+def heal_state
+  return {} unless File.exist?(HEAL_STATE_FILE)
+  JSON.parse(File.read(HEAL_STATE_FILE))
+rescue JSON::ParserError
+  {}
+end
+
+def heal_write_state(state)
+  File.write(HEAL_STATE_FILE, JSON.pretty_generate(state))
+end
+
+# Poll CI until settled. Writes state.json with failing job info.
+# Exits 0 = all green, 1 = failures found, 2 = attempt limit reached.
+def cmd_heal_poll(args)
+  pr = args.shift
+  abort "Usage: bin/worktree heal-poll <pr>" unless pr
+
+  state = heal_state
+  if (state["attempt"] || 0) >= HEAL_MAX_ATTEMPTS
+    warn "heal-poll: attempt limit (#{HEAL_MAX_ATTEMPTS}) reached"
+    exit 2
+  end
+
+  puts "→ Waiting for CI on PR ##{pr}..."
+  system("gh pr checks #{pr.shellescape} --watch --interval 10")
+
+  raw, = Open3.capture2("gh pr checks #{pr.shellescape} --json name,state,detailsUrl 2>/dev/null")
+  checks = raw.empty? ? [] : JSON.parse(raw)
+  failures = checks.select { |c| c["state"] == "FAILURE" }
+
+  if failures.empty?
+    tabular, = Open3.capture2("gh pr checks #{pr.shellescape}")
+    if tabular.match?(/\bfail\b/i)
+      puts "→ Detected failures via tabular output (gh --json unsupported or empty)"
+      failures = tabular.lines.select { |l| l.match?(/\bfail\b/i) }.map { |l| { "name" => l.split.first, "detailsUrl" => nil } }
+    end
+  end
+
+  if failures.empty?
+    puts "✓ CI green for PR ##{pr}"
+    heal_write_state(state.merge("pr" => pr, "status" => "green"))
+    exit 0
+  end
+
+  puts "✗ #{failures.size} failing job(s): #{failures.map { |f| f["name"] }.join(", ")}"
+  heal_write_state(state.merge("pr" => pr, "status" => "failing", "failures" => failures))
+  exit 1
+rescue JSON::ParserError => e
+  warn "heal-poll: could not parse gh output — #{e.message}"
+  exit 1
+end
+
+# Run the failing test via bin/test, write result to state.json.
+# Exits 0 = test passes, 1 = test still failing.
+def cmd_heal_reproduce(args)
+  pr = args.shift
+  test_ref = args.shift  # "path/to/test.rb:42"
+  abort "Usage: bin/worktree heal-reproduce <pr> <file:line>" unless pr && test_ref
+
+  state = heal_state
+
+  info = gh_json("pr view #{pr.shellescape} --json headRefName") || {}
+  branch = info["headRefName"]
+  wt = branch && find_worktree(branch)
+  wt_path = wt&.fetch(:path) || Dir.pwd
+
+  attempt = state["attempt"] || 0
+  log_file = "/tmp/heal-ci-attempt-#{attempt}.log"
+  cmd = "bin/test #{test_ref.shellescape}"
+
+  puts "→ [attempt #{attempt}] #{cmd}"
+  output, status = Open3.capture2e("cd #{wt_path.shellescape} && #{cmd}")
+  File.write(log_file, output)
+  puts output
+
+  passed = status.success?
+  heal_write_state(state.merge(
+    "wt_path"     => wt_path,
+    "test_ref"    => test_ref,
+    "last_log"    => log_file,
+    "last_passed" => passed
+  ))
+
+  exit passed ? 0 : 1
+end
+
+# Stage a specific file, commit, push. Increments attempt counter.
+# Exits 0 = committed+pushed, 5 = limit reached (do not push).
+def cmd_heal_commit(args)
+  pr      = args.shift
+  file    = args.shift
+  message = args.shift
+  abort "Usage: bin/worktree heal-commit <pr> <file> <message>" unless pr && file && message
+
+  state = heal_state
+  attempt = (state["attempt"] || 0) + 1
+
+  if attempt > HEAL_MAX_ATTEMPTS
+    warn "heal-commit: attempt limit (#{HEAL_MAX_ATTEMPTS}) reached — escalate"
+    heal_write_state(state.merge("attempt" => attempt, "status" => "limit_reached"))
+    exit 5
+  end
+
+  wt_path = state["wt_path"] || Dir.pwd
+  info    = gh_json("pr view #{pr.shellescape} --json headRefName") || {}
+  branch  = info["headRefName"]
+
+  Dir.chdir(wt_path) do
+    system("git add #{file.shellescape}") || abort("git add failed")
+    system("git commit -m #{message.shellescape}") || abort("git commit failed")
+    system("git push origin HEAD:#{branch.shellescape}") || abort("git push failed")
+  end
+
+  heal_write_state(state.merge("attempt" => attempt, "status" => "pushed"))
+  puts "→ Committed and pushed [attempt #{attempt}/#{HEAL_MAX_ATTEMPTS}]"
+  exit 0
+end
+
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
 USAGE = <<~USAGE
@@ -708,7 +837,8 @@ USAGE = <<~USAGE
   Subcommands:
     prepare <id> [--pr|--issue] [--test-first]
                               Fetch GH info, create worktree, output JSON
-    harness [id]              Find/create tmux window and launch Claude
+    harness [id] [--prompt-file <path>] [--window <name>] [--fresh] [--gemini]
+                              Find/create tmux window and launch Claude (or Gemini) via launcher script
     check-hill [number]       Wait for CI and report status for hill PRs
     cleanup <id>              Wait for CI, merge PR, and tear down worktree/window
     add [--parent <p>] <branch> [path]
@@ -722,6 +852,9 @@ USAGE = <<~USAGE
     down [name]               Stop server and remove worktree
     handoff [id]              Gather PR and git context for session handoff
     list                      Show all worktrees with port and server status
+    heal-poll <pr>            Poll CI; exit 0=green 1=failing 2=limit; write /tmp/heal-ci-state.json
+    heal-reproduce <pr> <f:l> Run bin/test <f:l>; exit 0=pass 1=fail; update state.json
+    heal-commit <pr> <f> <m>  Stage file, commit, push; increment attempt counter; exit 5 at limit
 USAGE
 
 subcommand = ARGV.shift
@@ -739,6 +872,9 @@ when "down"           then cmd_down(ARGV)
 when "down-children"  then cmd_down_children(ARGV)
 when "handoff"        then cmd_handoff(ARGV)
 when "list"           then cmd_list(ARGV)
+when "heal-poll"      then cmd_heal_poll(ARGV)
+when "heal-reproduce" then cmd_heal_reproduce(ARGV)
+when "heal-commit"    then cmd_heal_commit(ARGV)
 else
   puts USAGE
   exit subcommand.nil? ? 0 : 1

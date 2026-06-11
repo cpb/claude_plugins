@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C * log *)",
+      "Bash(git -C * status *)",
+      "Bash(git -C * diff *)",
+      "Bash(git -C * branch *)",
+      "Bash(git -C * show *)",
+      "Bash(git -C * remote *)",
+      "Bash(git -C * rev-parse *)",
+      "Bash(git -C * ls-files *)",
+      "Bash(git -C * stash list*)",
+      "Bash(git -C * worktree *)"
+    ]
+  }
+}
