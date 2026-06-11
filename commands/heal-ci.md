@@ -78,7 +78,7 @@ bin/worktree heal-reproduce "$PR" "<file>:<line>"
 REPRO_EXIT=$?
 ```
 
-- Runs `bin/rails test <file>:<line>` in the worktree.
+- Runs `bin/test <file>:<line>` in the worktree.
 - If `REPRO_EXIT=0`: the test passes locally (flaky). Skip to **3e** with classification `FLAKY` and no file edit.
 
 ---

@@ -53,11 +53,12 @@ The workflow skills rely on three conventions your project must implement:
 |---|---|---|
 | `bin/setup` | `bin/worktree add` | Set up a new worktree (install deps, prepare DB, etc.) |
 | `bin/dev` | `bin/worktree server` | Start the development server on `$PORT` |
+| `bin/test` | `bin/worktree heal-reproduce` | Run a test by file:line — editable; plugin provides a default that calls `bin/rails test` |
 | `bin/check-worktree` | Hook (PreToolUse) | Block edits on main branch — editable; plugin provides generic fallback |
 | `bin/claude-code-web-setup` | Hook (PreToolUse, remote only) | Install deps in web sessions — editable; plugin provides no-op fallback |
 | `bin/lint` | Hook (PostToolUse) | Auto-format edited files — editable; plugin provides no-op fallback |
 
-Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, and `bin/lint` as editable starters.
+Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, `bin/lint`, and `bin/test` as editable starters.
 
 ### bin/setup
 
@@ -77,6 +78,15 @@ Called by `worktree server` to start the dev server in the background. Must resp
 ```bash
 #!/bin/bash
 exec bundle exec rails server -b 0.0.0.0 -p "${PORT:-3000}"
+```
+
+### bin/test
+
+Called by `bin/worktree heal-reproduce` to run a single test. Receives the file:line argument. Default calls `bin/rails test`. Override to use a different runner:
+
+```bash
+#!/usr/bin/env bash
+exec bin/rails test "$@"
 ```
 
 ### bin/check-worktree

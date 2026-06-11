@@ -17,7 +17,7 @@ Abort if this is not a git repository.
 
 **2. Check for existing files**
 
-Check which of these already exist: `bin/check-worktree`, `bin/claude-code-web-setup`, `bin/lint`.
+Check which of these already exist: `bin/check-worktree`, `bin/claude-code-web-setup`, `bin/lint`, `bin/test`.
 
 If any exist and `--force` is not in `$ARGUMENTS`, print which ones exist and stop:
 ```
@@ -98,7 +98,28 @@ HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS
 chmod +x bin/lint
 ```
 
-**7. Check for bin/setup and bin/dev**
+**7. Create bin/test**
+
+Write the following boilerplate to `./bin/test` and make it executable:
+
+```bash
+#!/usr/bin/env bash
+# Called by bin/worktree heal-reproduce to run a single test by file:line.
+# Override this script to change the test runner or add setup steps.
+#
+# Default: bin/rails test (Minitest)
+# Other examples:
+#   bundle exec rspec "$@"
+#   bundle exec pytest "$@"
+
+exec bin/rails test "$@"
+```
+
+```bash
+chmod +x bin/test
+```
+
+**8. Check for bin/setup and bin/dev**
 
 If `bin/setup` does not exist, print:
 ```
@@ -112,7 +133,7 @@ Warning: bin/dev is missing. bin/worktree server calls bin/dev to start the deve
 Create it (e.g. exec rails server -b 0.0.0.0 -p $PORT) for worktree server commands to work.
 ```
 
-**8. Print summary**
+**9. Print summary**
 
 Print a checklist:
 
@@ -123,6 +144,7 @@ Created:
   bin/check-worktree        — blocks edits on main branch (edit to customize)
   bin/claude-code-web-setup — web session setup stub (add your dependency installs)
   bin/lint                  — PostToolUse formatter (configured for hk — edit for your stack)
+  bin/test                  — test runner for heal-ci (defaults to bin/rails test — edit for your stack)
 
 Plugin hooks dispatch to these scripts when they exist. Edit each one to fit your project.
 
