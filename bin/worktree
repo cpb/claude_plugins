@@ -296,8 +296,23 @@ end
 
 def cmd_harness(args)
   check_tmux
+
+  prompt_file_arg = nil
+  if (idx = args.index("--prompt-file"))
+    args.delete_at(idx)
+    prompt_file_arg = args.delete_at(idx)
+  end
+
+  window_name_override = nil
+  if (idx = args.index("--window"))
+    args.delete_at(idx)
+    window_name_override = args.delete_at(idx)
+  end
+
+  use_gemini = args.delete("--gemini")
+  fresh_window = args.delete("--fresh")
+
   id = args.shift
-  use_gemini = args.include?("--gemini")
 
   if id
     # Precise branch-name prefix match, then session JSON scan by number field.
@@ -322,37 +337,52 @@ def cmd_harness(args)
     id = session["number"] if session
   end
 
-  abort "Usage: bin/worktree harness [id]" unless session
-  
-  wt_path = session["worktree_path"]
-  tmux_target = session["tmux_target"] || session["tmux_window"]
-  remote_control = session["remote_control"]
-  type = session["type"]
-  
-  # Final verification of target
-  actual_target = tmux_window_target(wt_path, session["tmux_window"])
-  target = actual_target || tmux_target
+  abort "Usage: bin/worktree harness [id] [--prompt-file <path>] [--window <name>] [--fresh] [--gemini]" unless session
 
-  # Ensure the window exists
-  unless target && system("tmux has-session -t #{target.shellescape} 2>/dev/null")
-    puts "→ Creating new tmux window '#{tmux_target}'..."
-    system("tmux new-window -n #{tmux_target.shellescape} -c #{wt_path.shellescape}")
-    target = tmux_target
-  end
-  
-  if use_gemini
-    cmd = "gemini --skip-trust"
-    cmd += " --approval-mode plan" if type == "issue"
-    cmd += " --prompt-interactive \"$(< pr_context.md)\""
+  wt_path        = session["worktree_path"]
+  tmux_target    = session["tmux_target"] || session["tmux_window"]
+  remote_control = session["remote_control"]
+  type           = session["type"]
+  prompt_file    = prompt_file_arg || File.join(wt_path, "pr_context.md")
+  window_name    = window_name_override || tmux_target
+
+  # --fresh: kill any existing window with this name before creating a new one
+  if fresh_window
+    out, _ = Open3.capture2("tmux list-windows -a -F '\#{session_name}:\#{window_index} \#{window_name}'")
+    out.lines.each do |l|
+      parts = l.split
+      next unless parts.size >= 2 && parts[1] == window_name
+      system("tmux kill-window -t #{parts[0].shellescape}")
+    end
+    sleep 0.2
+    target = nil
   else
-    cmd = "claude --remote-control #{remote_control}"
-    cmd += " --permission-mode plan" if type == "issue"
-    cmd += " \"$(< pr_context.md)\""
+    actual_target = tmux_window_target(wt_path, session["tmux_window"])
+    target = actual_target || tmux_target
   end
-  
-  puts "→ Sending command to tmux window '#{target}':"
-  puts "  #{cmd}"
-  system("tmux send-keys -t #{target.shellescape} #{cmd.shellescape} Enter")
+
+  unless target && system("tmux has-session -t #{target.shellescape} 2>/dev/null")
+    puts "→ Creating new tmux window '#{window_name}'..."
+    system("tmux new-window -n #{window_name.shellescape} -c #{wt_path.shellescape}")
+    target = window_name
+  end
+
+  # Write launcher script — avoids shell-quoting layers when passing prompt through tmux send-keys
+  launcher = "/tmp/harness-#{remote_control}.sh"
+  if use_gemini
+    cmd_str = "exec gemini --skip-trust"
+    cmd_str += " --approval-mode plan" if type == "issue"
+    cmd_str += " --prompt-interactive \"$(< #{Shellwords.escape(prompt_file)})\""
+  else
+    cmd_str = "exec claude --remote-control #{Shellwords.escape(remote_control)}"
+    cmd_str += " --permission-mode plan" if type == "issue"
+    cmd_str += " \"$(< #{Shellwords.escape(prompt_file)})\""
+  end
+  File.write(launcher, "#!/usr/bin/env bash\n#{cmd_str}\n")
+  FileUtils.chmod(0755, launcher)
+
+  puts "→ Launching in tmux window '#{target}' via #{launcher}"
+  system("tmux send-keys -t #{target.shellescape} #{"bash #{launcher}".shellescape} Enter")
 end
 
 def cmd_check_hill(args)
@@ -708,7 +738,8 @@ USAGE = <<~USAGE
   Subcommands:
     prepare <id> [--pr|--issue] [--test-first]
                               Fetch GH info, create worktree, output JSON
-    harness [id]              Find/create tmux window and launch Claude
+    harness [id] [--prompt-file <path>] [--window <name>] [--fresh] [--gemini]
+                              Find/create tmux window and launch Claude (or Gemini) via launcher script
     check-hill [number]       Wait for CI and report status for hill PRs
     cleanup <id>              Wait for CI, merge PR, and tear down worktree/window
     add [--parent <p>] <branch> [path]

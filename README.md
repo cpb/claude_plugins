@@ -114,9 +114,52 @@ HK_PKL_BACKEND=pklr hk fix $CLAUDE_FILE_PATHS
 
 Replace the body with whatever your project uses: `prettier --write`, `rubocop --autocorrect`, `ruff check --fix`, etc.
 
+## Session launch path
+
+Skills follow a two-step pattern:
+
+1. **`bin/worktree prepare <id>`** — fetches GitHub info, creates or locates the worktree, writes `.worktree-session.json` and `pr_context.md`, and prints session JSON.
+
+2. **`bin/worktree harness <id>`** — reads the session JSON, creates a tmux window in the worktree, writes a launcher script to `/tmp/harness-<rc>.sh`, and sends `bash /tmp/harness-<rc>.sh` to the window.
+
+Skills capture the prepare output into a shell variable so no `/tmp/*.json` intermediary is needed:
+
+```bash
+session=$(bin/worktree prepare "$1" --issue)
+wt_path=$(echo "$session" | jq -r '.worktree_path')
+```
+
+### Harness flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--prompt-file <path>` | `<wt_path>/pr_context.md` | Prompt file to pass to Claude/Gemini |
+| `--window <name>` | `session["tmux_window"]` | Override the tmux window name |
+| `--fresh` | false | Kill any existing window with that name before creating a new one |
+| `--gemini` | false | Launch Gemini instead of Claude |
+
+The launcher script avoids quoting breakage: instead of inlining the prompt through `tmux send-keys` (which can break on backticks, newlines, and quotes), the full command is written to a bash script and only `bash /tmp/harness-<rc>.sh` is sent through tmux.
+
 ## Worktree commands
 
 `bin/worktree` is added to `PATH` when the plugin is active (callable as `worktree`). Skills call it as `bin/worktree` (relative path), so install it into your project's `bin/` via `/cpb-dev-workflow:init`.
+
+### Session launch path
+
+All session-launching skills (`start-pr`, `continue-pr`, `research-pr`, `qa-pr-skill`) share one launch path:
+
+1. **`bin/worktree prepare <id>`** — fetches GitHub info, creates the worktree, writes `pr_context.md` and `.worktree-session.json`, and prints a JSON object on stdout. Skills capture this with `session=$(bin/worktree prepare …)` and read fields with `jq -r '.<field>'`.
+
+2. **`bin/worktree harness <id> [flags]`** — finds or creates the tmux window, writes a `/tmp/harness-<rc>.sh` launcher script, and sends the script path via `tmux send-keys`. All flags:
+
+   | Flag | Default | Description |
+   |---|---|---|
+   | `--prompt-file <path>` | `<worktree>/pr_context.md` | Prompt file to feed to the agent |
+   | `--window <name>` | Session's `tmux_window` | Override the tmux window name |
+   | `--fresh` | (reuse existing) | Kill any existing window with the target name, then create a clean one |
+   | `--gemini` | (use Claude) | Launch Gemini instead of Claude |
+
+   The launcher-script mechanism (`/tmp/harness-<rc>.sh`) avoids the shell re-parsing that occurs when long prompts are inlined through `tmux send-keys`. Prompts containing backticks, newlines, or quotes are handled correctly.
 
 ### Worktree directory naming
 
