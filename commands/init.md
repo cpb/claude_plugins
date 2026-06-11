@@ -1,9 +1,9 @@
 ---
-description: Scaffold the project-specific hook scripts needed to use cpb-dev-workflow in a new project
+description: Scaffold the project-specific hook scripts needed to use cpb in a new project
 argument-hint: [--force]
 ---
 
-Set up a new project to use the cpb-dev-workflow plugin by creating editable hook scripts in bin/ and documenting what to customize.
+Set up a new project to use the cpb plugin by creating editable hook scripts in bin/ and documenting what to customize.
 
 ## Steps
 
@@ -79,7 +79,7 @@ Write the following boilerplate to `./bin/lint` and make it executable:
 
 ```bash
 #!/usr/bin/env bash
-# PostToolUse hook — called by cpb-dev-workflow after every Edit/Write tool call.
+# PostToolUse hook — called by cpb after every Edit/Write tool call.
 # $CLAUDE_FILE_PATHS contains the space-separated paths of files that were modified.
 # Implement your project's auto-formatting and linting here.
 #
@@ -117,7 +117,7 @@ Create it (e.g. exec rails server -b 0.0.0.0 -p $PORT) for worktree server comma
 Print a checklist:
 
 ```
-cpb-dev-workflow project setup complete.
+cpb project setup complete.
 
 Created:
   bin/check-worktree        — blocks edits on main branch (edit to customize)

@@ -1,47 +1,53 @@
-# cpb-dev-workflow
+# cpb/claude-plugins
 
-A Claude Code plugin providing general-purpose GitHub development workflow skills and worktree tooling.
+A Claude Code plugin marketplace. The `cpb` plugin provides general-purpose GitHub development workflow skills and worktree tooling.
 
-## Skills
+## Plugins
 
-All skills are namespaced as `/cpb-dev-workflow:<name>`.
+| Plugin | Description |
+|---|---|
+| `cpb` | GitHub workflow skills and worktree tooling |
+
+## cpb — Skills
+
+All skills are namespaced as `/cpb:<name>`.
 
 | Skill | Purpose |
 |---|---|
-| `/cpb-dev-workflow:start-pr <n>` | Create worktree + plan-mode Claude session for a GitHub issue |
-| `/cpb-dev-workflow:continue-pr <n>` | Create worktree + Claude session for an open PR |
-| `/cpb-dev-workflow:finish-pr [n]` | CI gate → squash-merge → worktree teardown |
-| `/cpb-dev-workflow:qa-pr [n]` | Router: detect PR mode, delegate to sub-commands, finish on pass |
-| `/cpb-dev-workflow:qa-pr-skill <n>` | Skill-contribution walkthrough via automated Claude session |
-| `/cpb-dev-workflow:qa-pr-app <n>` | App-change walkthrough via dev server + browser automation |
-| `/cpb-dev-workflow:new-issue [topic]` | Elicit intent and create a GitHub issue |
-| `/cpb-dev-workflow:hill-first <layers>` | Write failing tests per layer, open draft PR for review |
-| `/cpb-dev-workflow:research-pr <n>` | Spawn parallel research agents, gate plan agents, open draft PR |
-| `/cpb-dev-workflow:kaizen-handoff [n]` | Generate narrative handoff prompt for a fresh session |
-| `/cpb-dev-workflow:verify [item]` | Verify a code change by running the app and observing behavior |
-| `/cpb-dev-workflow:init` | Scaffold project-specific files for a new project |
+| `/cpb:start-pr <n>` | Create worktree + plan-mode Claude session for a GitHub issue |
+| `/cpb:continue-pr <n>` | Create worktree + Claude session for an open PR |
+| `/cpb:finish-pr [n]` | CI gate → squash-merge → worktree teardown |
+| `/cpb:qa-pr [n]` | Router: detect PR mode, delegate to sub-commands, finish on pass |
+| `/cpb:qa-pr-skill <n>` | Skill-contribution walkthrough via automated Claude session |
+| `/cpb:qa-pr-app <n>` | App-change walkthrough via dev server + browser automation |
+| `/cpb:new-issue [topic]` | Elicit intent and create a GitHub issue |
+| `/cpb:hill-first <layers>` | Write failing tests per layer, open draft PR for review |
+| `/cpb:research-pr <n>` | Spawn parallel research agents, gate plan agents, open draft PR |
+| `/cpb:kaizen-handoff [n]` | Generate narrative handoff prompt for a fresh session |
+| `/cpb:verify [item]` | Verify a code change by running the app and observing behavior |
+| `/cpb:init` | Scaffold project-specific files for a new project |
 
 ## Installation
 
 ### Via skills directory (simplest — no marketplace step)
 
 ```bash
-git clone https://github.com/cpb/claude_plugins ~/.claude/skills/cpb-dev-workflow
+git clone https://github.com/cpb/claude-plugins ~/.claude/skills/cpb
 ```
 
-Loads automatically as `cpb-dev-workflow@skills-dir` on the next Claude Code session.
+Loads automatically as `cpb@skills-dir` on the next Claude Code session.
 
 ### Via marketplace
 
 ```
-/plugin marketplace add cpb/claude_plugins
-/plugin install cpb-dev-workflow@cpb
+/plugin marketplace add cpb/claude-plugins
+/plugin install cpb@cpb
 ```
 
 ### Local testing
 
 ```bash
-claude --plugin-dir /path/to/cpb/claude_plugins
+claude --plugin-dir /path/to/cpb/claude-plugins
 ```
 
 ## Project setup
@@ -56,7 +62,7 @@ The workflow skills rely on three conventions your project must implement:
 | `bin/claude-code-web-setup` | Hook (PreToolUse, remote only) | Install deps in web sessions — editable; plugin provides no-op fallback |
 | `bin/lint` | Hook (PostToolUse) | Auto-format edited files — editable; plugin provides no-op fallback |
 
-Run `/cpb-dev-workflow:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, and `bin/lint` as editable starters.
+Run `/cpb:init` in a new project to scaffold `bin/check-worktree`, `bin/claude-code-web-setup`, and `bin/lint` as editable starters.
 
 ### bin/setup
 
@@ -80,11 +86,11 @@ exec bundle exec rails server -b 0.0.0.0 -p "${PORT:-3000}"
 
 ### bin/check-worktree
 
-The plugin ships a generic version that blocks `Edit`/`Write` on the `main` branch. After running `/cpb-dev-workflow:init`, edit `./bin/check-worktree` to customize the behavior (e.g., change the protected branch name or the error message).
+The plugin ships a generic version that blocks `Edit`/`Write` on the `main` branch. After running `/cpb:init`, edit `./bin/check-worktree` to customize the behavior (e.g., change the protected branch name or the error message).
 
 ### bin/claude-code-web-setup
 
-The plugin ships a no-op skeleton. After running `/cpb-dev-workflow:init`, implement project-specific web session setup (e.g., `bundle install`, `hk install`). Use `tmp/claude-web-receipts/` for receipt-file caching to avoid re-running on every tool call.
+The plugin ships a no-op skeleton. After running `/cpb:init`, implement project-specific web session setup (e.g., `bundle install`, `hk install`). Use `tmp/claude-web-receipts/` for receipt-file caching to avoid re-running on every tool call.
 
 ## Hooks
 
@@ -98,13 +104,13 @@ The plugin registers three hooks via `hooks/hooks.json`, each dispatching to a p
 
 Each hook's only guard is whether the project script exists. No other conditions are checked — put project-specific guards (tool availability, config file presence, etc.) inside the script itself.
 
-The plugin's `bin/` is added to the **Bash tool's PATH only** — hook processes use `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PROJECT_DIR}` for path resolution. Run `/cpb-dev-workflow:init` to install editable copies of all three scripts into your project's `./bin/`.
+The plugin's `bin/` is added to the **Bash tool's PATH only** — hook processes use `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PROJECT_DIR}` for path resolution. Run `/cpb:init` to install editable copies of all three scripts into your project's `./bin/`.
 
 ### bin/lint
 
 `bin/lint` is the project's PostToolUse formatting hook. `$CLAUDE_FILE_PATHS` is available as an environment variable containing the space-separated paths of files modified by the tool call.
 
-`/cpb-dev-workflow:init` creates this boilerplate:
+`/cpb:init` creates this boilerplate:
 
 ```bash
 #!/usr/bin/env bash
@@ -116,7 +122,7 @@ Replace the body with whatever your project uses: `prettier --write`, `rubocop -
 
 ## Worktree commands
 
-`bin/worktree` is added to `PATH` when the plugin is active (callable as `worktree`). Skills call it as `bin/worktree` (relative path), so install it into your project's `bin/` via `/cpb-dev-workflow:init`.
+`bin/worktree` is added to `PATH` when the plugin is active (callable as `worktree`). Skills call it as `bin/worktree` (relative path), so install it into your project's `bin/` via `/cpb:init`.
 
 ### Worktree directory naming
 
@@ -138,8 +144,16 @@ If you're migrating a project that already has these skills as standalone `.clau
 
 1. Install the plugin (see above)
 2. Update cross-skill references in your local skill files to use the namespaced form, e.g.:
-   - `invoke the \`qa-pr-skill\` skill` → `invoke the \`cpb-dev-workflow:qa-pr-skill\` skill`
+   - `invoke the \`qa-pr-skill\` skill` → `invoke the \`cpb:qa-pr-skill\` skill`
 3. Delete the local copies from `.claude/commands/` once confirmed working
-4. Invocation syntax changes from `/start-pr` to `/cpb-dev-workflow:start-pr`
+4. Invocation syntax changes from `/start-pr` to `/cpb:start-pr`
 
 The standalone and plugin versions can coexist temporarily — the local `.claude/commands/` files take precedence over the plugin versions for same-named skills.
+
+## Migrating from cpb-dev-workflow
+
+If you previously installed as `cpb-dev-workflow`:
+
+- Update your clone: `git clone https://github.com/cpb/claude-plugins ~/.claude/skills/cpb`
+- Or via marketplace: `/plugin install cpb@cpb` (replacing `cpb-dev-workflow@cpb`)
+- Invocation syntax changes from `/cpb-dev-workflow:<skill>` to `/cpb:<skill>`

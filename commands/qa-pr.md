@@ -71,8 +71,8 @@ A PR may be both. Note which modes apply.
 
 Run the applicable sub-command(s) in order. Pass the PR number as the argument.
 
-If the PR is skill mode: invoke the `cpb-dev-workflow:qa-pr-skill` skill with `<number>`.
-If the PR is app mode: invoke the `cpb-dev-workflow:qa-pr-app` skill with `<number>`.
+If the PR is skill mode: invoke the `cpb:qa-pr-skill` skill with `<number>`.
+If the PR is app mode: invoke the `cpb:qa-pr-app` skill with `<number>`.
 
 If neither mode is detected, print:
 ```
@@ -92,4 +92,4 @@ All test-plan items passed for PR #<number>: <title>.
 Calling /finish-pr to merge and clean up.
 ```
 
-Invoke the `cpb-dev-workflow:finish-pr` skill.
+Invoke the `cpb:finish-pr` skill.
