@@ -19,6 +19,7 @@ All skills are namespaced as `/cpb-dev-workflow:<name>`.
 | `/cpb-dev-workflow:research-pr <n>` | Spawn parallel research agents, gate plan agents, open draft PR |
 | `/cpb-dev-workflow:kaizen-handoff [n]` | Generate narrative handoff prompt for a fresh session |
 | `/cpb-dev-workflow:verify [item]` | Verify a code change by running the app and observing behavior |
+| `/cpb-dev-workflow:heal-ci <n>` | Poll CI, reproduce failures, classify root cause, fix and push until green |
 | `/cpb-dev-workflow:init` | Scaffold project-specific files for a new project |
 
 ## Installation

@@ -3,7 +3,7 @@ description: Poll CI for a PR, reproduce failing system tests locally, classify 
 argument-hint: <pr-number>
 ---
 
-Given PR `$ARGUMENTS`, drive CI to green by diagnosing and fixing failing system tests in an isolated worktree, looping up to 5 times before asking for help.
+Given PR `$ARGUMENTS`, drive CI to green by diagnosing and fixing failing system tests in an isolated worktree, looping up to 5 attempts total before asking for help.
 
 ---
 
@@ -13,11 +13,11 @@ Before touching any code, consult this classification table. Match the test outp
 
 | ID | Symptom | Root cause | Fix |
 |----|---------|-----------|-----|
-| **VCR** | `WebMock::NetConnectNotAllowedError` or `VCR::Errors::UnhandledHTTPRequestError` referencing `localhost` or `127.0.0.1` | VCR/WebMock blocks real HTTP; test hits a localhost service that wasn't recorded | Add `:allow_localhost` option in the cassette or `WebMock.disable_net_connect!(allow_localhost: true)` in the relevant spec helper; or record a new cassette by setting `VCR_RECORD=all` |
-| **HEIGHT** | `Capybara::ElementNotFound` or layout assertion failure containing words like `height`, `min-height`, or `overflow` | CSS layout height constraint not accounted for in test viewport | Increase `Capybara.default_max_wait_time` **or** set an explicit `page.driver.browser.manage.window.resize_to` before the step, or fix the constraint in the view |
-| **BRAKEMAN** | Brakeman exits non-zero; message references a hook property like `_before_action`, `skip_before_action`, or a custom filter | Brakeman inspects hook metadata that changed; false positive or real finding | If false positive: add a `# brakeman:ignore` annotation with a reason; if real: fix the underlying security issue (mass assignment, redirect, SQL injection, etc.) |
-| **CREDS** | `ActiveSupport::MessageEncryptor::InvalidMessage` or `ArgumentError: key must be 32 bytes` or `Rails.application.credentials` returning `nil` | `credentials.yml.enc` or `master.key` absent/mismatched in the test environment | Ensure `config/master.key` (or `config/credentials/<env>.key`) is present in the worktree; re-run `rails credentials:edit` if corrupted; never commit the key |
-| **FLAKY** | Test failure that disappears on re-run with no code change | Race condition, time-zone sensitivity, or DB ordering assumption | Re-run once; if it passes, commit a `--order random --seed` annotation or add `travel_to` / `Timecop.freeze` wrapper |
+| **VCR** | `WebMock::NetConnectNotAllowedError` or `VCR::Errors::UnhandledHTTPRequestError` referencing `localhost` or `127.0.0.1` | VCR/WebMock blocks real HTTP; test hits a localhost service that wasn't recorded | Add `allow_localhost: true` in the VCR configure block or `WebMock.disable_net_connect!(allow_localhost: true)` in the relevant test helper; or delete the cassette file under `test/cassettes/` so it re-records |
+| **HEIGHT** | `Capybara::ElementNotFound` or assertion failure mentioning `height`, `min-height`, or `overflow` | CSS layout height constraint not accounted for in test viewport | Before the failing step insert `page.driver.browser.manage.window.resize_to(1280, 900)`; or fix the height constraint in the stylesheet |
+| **BRAKEMAN** | Brakeman exits non-zero; message references a hook property like `_before_action`, `skip_before_action`, or a custom filter | Brakeman inspects hook metadata that changed; false positive or real finding | If false positive: add `# brakeman:ignore:WarningType -- reason` on the offending line; if real: fix the underlying security issue |
+| **CREDS** | `ActiveSupport::MessageEncryptor::InvalidMessage`, `ArgumentError: key must be 32 bytes`, or `Rails.application.credentials` returning `nil` | `credentials.yml.enc` or `master.key` absent/mismatched in the worktree | Copy the key from the primary worktree (see CREDS fix in §8a); never commit the key |
+| **FLAKY** | Test failure that disappears on re-run with no code change | Race condition, time-zone sensitivity, or DB ordering assumption | Re-run once; if it passes, wrap the test body with `travel_to(Time.zone.parse("2024-01-01")) { ... }` and commit |
 
 ---
 
@@ -30,11 +30,14 @@ if [ -z "$ARGUMENTS" ]; then echo "Usage: /heal-ci <pr-number>"; exit 1; fi
 PR="$ARGUMENTS"
 ```
 
-### 2. Fetch PR metadata
+### 2. Initialize the attempt counter
+
+**Set `ATTEMPT=0` once here, before any loop.** This counter is shared across every inner fix iteration and every outer poll→fix→push cycle. It is never reset. Escalate the moment `ATTEMPT` reaches 5.
+
+### 3. Fetch PR metadata
 
 ```bash
-gh pr view "$PR" --json headRefName,title,url,statusCheckRollup \
-  | tee /tmp/heal-ci-pr.json
+gh pr view "$PR" --json headRefName,title,url | tee /tmp/heal-ci-pr.json
 ```
 
 Extract:
@@ -42,95 +45,130 @@ Extract:
 - `PR_TITLE` = `.title`
 - `PR_URL` = `.url`
 
-### 3. Poll CI until complete
+### 4. Open an isolated worktree (once)
+
+Use the plugin's worktree tooling so that `bin/setup` runs (installs dependencies, prepares the DB) and a port is assigned:
+
+```bash
+bin/worktree prepare "$PR" --pr > /tmp/heal-ci-wt.json
+WORKTREE_PATH=$(jq -r '.path' /tmp/heal-ci-wt.json)
+```
+
+If `bin/worktree prepare` is unavailable, fall back to:
+
+```bash
+WORKTREE_PATH=$(git worktree list --porcelain \
+  | grep -B2 "branch refs/heads/$HEAD_BRANCH" \
+  | grep "^worktree" | awk '{print $2}')
+if [ -z "$WORKTREE_PATH" ]; then
+  git fetch origin "$HEAD_BRANCH"
+  git worktree add "/tmp/heal-ci-pr-${PR}" "origin/$HEAD_BRANCH"
+  WORKTREE_PATH="/tmp/heal-ci-pr-${PR}"
+  cd "$WORKTREE_PATH" && bin/setup --skip-server
+fi
+```
+
+All subsequent shell commands run inside `$WORKTREE_PATH`.
+
+### 5. Detect test framework
+
+```bash
+if [ -f "$WORKTREE_PATH/.rspec" ] || [ -d "$WORKTREE_PATH/spec" ]; then
+  TEST_FRAMEWORK="rspec"
+else
+  TEST_FRAMEWORK="minitest"
+fi
+```
+
+Use this variable throughout steps 7–8 to select the correct run command:
+
+- **minitest**: `cd "$WORKTREE_PATH" && bin/rails test <test-file>:<line>`
+- **rspec**: `cd "$WORKTREE_PATH" && bundle exec rspec <test-file>:<line> --format documentation`
+
+Test file paths differ by framework:
+- minitest: `test/system/*_test.rb`, `test/cassettes/`
+- rspec: `spec/system/*_spec.rb`, `spec/cassettes/`
+
+### 6. Poll CI until complete
 
 ```bash
 gh pr checks "$PR" --watch --interval 10
 ```
 
-If all checks pass → print "CI green for PR #$PR — nothing to fix." and stop.
+If all checks pass → print "CI green for PR #$PR — nothing to fix." and stop (clean up the worktree per §10 first).
 
-If any checks fail, collect the list of failing check names and job URLs:
+If any checks fail, collect failing jobs. Note: `gh pr checks --json` emits a `state` field with values `SUCCESS`, `FAILURE`, `PENDING`, `SKIPPED`, or `CANCELLED`. Filter on `FAILURE`:
 
 ```bash
 gh pr checks "$PR" --json name,state,detailsUrl \
-  | jq '[.[] | select(.state == "FAILURE" or .state == "ERROR")]' \
+  | jq '[.[] | select(.state == "FAILURE")]' \
   > /tmp/heal-ci-failures.json
 ```
 
-### 4. Open an isolated worktree
+If the `--json` flag is unsupported by the installed `gh` version, parse the tabular output instead:
 
 ```bash
-WORKTREE_PATH="/tmp/heal-ci-pr-${PR}"
-if [ ! -d "$WORKTREE_PATH" ]; then
-  git fetch origin "$HEAD_BRANCH"
-  git worktree add "$WORKTREE_PATH" "origin/$HEAD_BRANCH"
-fi
+gh pr checks "$PR" 2>&1 | grep -E '\bfail\b|\bFAIL\b|\bfailure\b' \
+  > /tmp/heal-ci-failures.txt
 ```
 
-All subsequent shell commands in steps 5–8 run inside `$WORKTREE_PATH` (prefix with `cd "$WORKTREE_PATH" &&` or use subshells).
+### 7. Fetch CI logs for failing jobs
 
-### 5. Fetch CI logs for failing jobs
+For each failing job, fetch the raw log using the GitHub MCP tool:
 
-For each failing job URL, fetch the raw log:
-
-```bash
-gh run view --log <run-id>   # extract run-id from detailsUrl
-```
-
-Or use the GitHub MCP tool:
 ```
 ToolSearch: select:mcp__github__get_job_logs
 ```
-then call `mcp__github__get_job_logs` for each failing job.
+
+Call `mcp__github__get_job_logs` for each failing job ID (extract from `detailsUrl`).
 
 Parse the log to extract:
-- The **test file path** and line number (e.g. `spec/system/foo_spec.rb:42`)
+- The **test file path and line number** (e.g. `test/system/foo_test.rb:42` or `spec/system/foo_spec.rb:42`)
 - The **error message** and **backtrace top frame**
 
-### 6. Classify root cause
+### 8. Fix loop
 
-Match the extracted error against the **Known failure playbook** table above (§ Known failure playbook). Record the matched ID (`VCR`, `HEIGHT`, `BRAKEMAN`, `CREDS`, or `FLAKY`). If no pattern matches, label it `UNKNOWN`.
+**Check `ATTEMPT` before each iteration. If `ATTEMPT >= 5`, jump immediately to §Escalate.**
 
-### 7. Reproduce locally
+Increment `ATTEMPT` at the start of each iteration (before applying the fix).
 
-```bash
-cd "$WORKTREE_PATH"
-bundle exec rspec <test-file>:<line> --format documentation 2>&1 | tee /tmp/heal-ci-local.log
-```
+**8a. Classify root cause**
 
-Confirm the failure reproduces. If it does not reproduce locally, label `FLAKY` and proceed to § Commit & push with a re-run annotation only.
+Match the extracted error against the **Known failure playbook** table above. Record the ID (`VCR`, `HEIGHT`, `BRAKEMAN`, `CREDS`, or `FLAKY`). If no pattern matches, label `UNKNOWN`.
 
-### 8. Fix loop (up to 5 attempts)
+**8b. Apply targeted fix** based on classification:
 
-Initialise `ATTEMPT=1`.
-
-**8a. Apply targeted fix** based on classification:
-
-- **VCR**: In the spec file or its `spec/support` helper, locate the cassette block or `WebMock.disable_net_connect!` call and add `allow_localhost: true`. If a cassette file exists under `spec/cassettes/`, delete it so it re-records on next run; or set `record: :new_episodes`.
-- **HEIGHT**: Find the `resize_to` or `Capybara.current_session.current_window.resize_to` call nearest the failing step. If absent, insert `page.driver.browser.manage.window.resize_to(1280, 900)` before the step. If a height constraint in CSS is the root cause, adjust the value in the stylesheet.
-- **BRAKEMAN**: Run `bundle exec brakeman -f json 2>/dev/null | jq '.warnings[]'` to locate the exact warning. If false positive, add `# brakeman:ignore:WarningType -- reason` on the offending line. If real, apply the minimum fix (sanitize input, restrict attribute, etc.).
-- **CREDS**: Check for `config/master.key`. If missing: copy from the main worktree if available (`cp "$(git rev-parse --show-toplevel)/../config/master.key" config/master.key`). If unavailable, note this in the escalation message.
-- **FLAKY**: Add `aggregate_failures` or wrap the example with `travel_to(Time.zone.parse("2024-01-01"))` and re-run.
+- **VCR**: In the test file or its `test/test_helper.rb` / `spec/support` helper, locate the VCR configure block and add `c.allow_localhost = true`, or add `WebMock.disable_net_connect!(allow_localhost: true)`. Delete any stale cassette file under `test/cassettes/` (minitest) or `spec/cassettes/` (rspec) so it re-records.
+- **HEIGHT**: Insert `page.driver.browser.manage.window.resize_to(1280, 900)` immediately before the failing step in the test file. If a CSS height constraint is the root cause, fix the value in the stylesheet.
+- **BRAKEMAN**: Run `bundle exec brakeman -f json 2>/dev/null | jq '.warnings[]'` to locate the exact warning. If false positive, add `# brakeman:ignore:WarningType -- reason` on the offending line. If real, apply the minimum fix.
+- **CREDS**: Locate the primary worktree path via `git worktree list --porcelain | head -2 | grep "^worktree" | awk '{print $2}'`, then copy the key:
+  ```bash
+  PRIMARY=$(git worktree list --porcelain | head -2 | grep "^worktree" | awk '{print $2}')
+  cp "$PRIMARY/config/master.key" "$WORKTREE_PATH/config/master.key"
+  ```
+  If the key is absent from the primary worktree too, note this in the escalation message.
+- **FLAKY**: Wrap the failing test body with `travel_to(Time.zone.parse("2024-01-01")) { ... }`. For ordering assumptions, add `.order(:id)` to the relevant query.
 - **UNKNOWN**: Read the full backtrace, identify the first application frame, and apply a minimal targeted fix.
 
-**8b. Verify fix locally**:
+**8c. Verify fix locally**:
 
 ```bash
-cd "$WORKTREE_PATH"
-bundle exec rspec <test-file>:<line> --format documentation 2>&1 | tee /tmp/heal-ci-attempt-${ATTEMPT}.log
+# minitest
+cd "$WORKTREE_PATH" && bin/rails test <test-file>:<line> 2>&1 \
+  | tee /tmp/heal-ci-attempt-${ATTEMPT}.log
+
+# rspec
+cd "$WORKTREE_PATH" && bundle exec rspec <test-file>:<line> --format documentation 2>&1 \
+  | tee /tmp/heal-ci-attempt-${ATTEMPT}.log
 ```
 
-If the test passes, proceed to **8c**. If it fails:
-- Increment `ATTEMPT`.
-- If `ATTEMPT > 5`, jump to **§ Escalate**.
-- Re-read the new failure output, update the classification if needed, and return to **8a**.
+If the test passes, proceed to **8d**. If it fails and `ATTEMPT < 5`: re-read the new failure output, update classification if needed, increment `ATTEMPT`, and return to **8b**. If `ATTEMPT >= 5`, jump to **§Escalate**.
 
-**8c. Commit atomically**:
+**8d. Commit atomically**:
 
 ```bash
 cd "$WORKTREE_PATH"
-git add -p   # stage only the targeted fix; do not stage unrelated changes
+git add -p   # stage only the targeted fix
 git commit -m "fix(ci): <one-line description of root cause and fix> [attempt $ATTEMPT]"
 ```
 
@@ -141,7 +179,7 @@ cd "$WORKTREE_PATH"
 git push origin HEAD:"$HEAD_BRANCH"
 ```
 
-Then return to **§ 3. Poll CI** and repeat the full cycle (polling → classify → fix) counting each outer loop pass as one of the 5 attempts.
+Then return to **§6. Poll CI**. Do not reset `ATTEMPT` — the same counter continues across all outer cycles.
 
 ### 10. Report green
 
@@ -154,22 +192,24 @@ When `gh pr checks "$PR"` shows all checks passing:
   Fixes applied: <bullet list of each classification and the file changed>
 ```
 
-Remove the worktree:
+Tear down the worktree using the plugin tooling:
 
 ```bash
-git worktree remove --force "$WORKTREE_PATH"
+bin/worktree cleanup "$PR"
 ```
+
+If `bin/worktree cleanup` is unavailable: `git worktree remove --force "$WORKTREE_PATH"`.
 
 ---
 
 ## Escalate
 
-If all 5 attempts are exhausted without green CI, use `AskUserQuestion` with:
+If `ATTEMPT >= 5` without green CI, use `AskUserQuestion` with:
 
 - The PR number and URL
 - The persistent failing test(s) with file:line
-- The classification reached on attempt 5
-- The last 40 lines of `/tmp/heal-ci-attempt-5.log`
+- The classification reached on the last attempt
+- The last 40 lines of `/tmp/heal-ci-attempt-${ATTEMPT}.log`
 - A clear question: "I could not reach green after 5 attempts. The remaining failure is `<classification>` in `<file:line>`. Here is the last output — what should I try next?"
 
-Do **not** push any uncommitted changes before escalating.
+Do **not** push uncommitted changes before escalating. Leave the worktree in place so the state is inspectable.
