@@ -118,6 +118,23 @@ Replace the body with whatever your project uses: `prettier --write`, `rubocop -
 
 `bin/worktree` is added to `PATH` when the plugin is active (callable as `worktree`). Skills call it as `bin/worktree` (relative path), so install it into your project's `bin/` via `/cpb-dev-workflow:init`.
 
+### Session launch path
+
+All session-launching skills (`start-pr`, `continue-pr`, `research-pr`, `qa-pr-skill`) share one launch path:
+
+1. **`bin/worktree prepare <id>`** — fetches GitHub info, creates the worktree, writes `pr_context.md` and `.worktree-session.json`, and prints a JSON object on stdout. Skills capture this with `session=$(bin/worktree prepare …)` and read fields with `jq -r '.<field>'`.
+
+2. **`bin/worktree harness <id> [flags]`** — finds or creates the tmux window, writes a `/tmp/harness-<rc>.sh` launcher script, and sends the script path via `tmux send-keys`. All flags:
+
+   | Flag | Default | Description |
+   |---|---|---|
+   | `--prompt-file <path>` | `<worktree>/pr_context.md` | Prompt file to feed to the agent |
+   | `--window <name>` | Session's `tmux_window` | Override the tmux window name |
+   | `--fresh` | (reuse existing) | Kill any existing window with the target name, then create a clean one |
+   | `--gemini` | (use Claude) | Launch Gemini instead of Claude |
+
+   The launcher-script mechanism (`/tmp/harness-<rc>.sh`) avoids the shell re-parsing that occurs when long prompts are inlined through `tmux send-keys`. Prompts containing backticks, newlines, or quotes are handled correctly.
+
 ### Worktree directory naming
 
 New worktrees are created adjacent to the main repo as `<app-name>_<branch>`, where `<app-name>` is derived from the git root directory name. For a repo at `~/projects/my-app`, a branch `feature-x` gets a worktree at `~/projects/my-app_feature-x`.
