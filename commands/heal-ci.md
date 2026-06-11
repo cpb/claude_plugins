@@ -13,7 +13,7 @@ Match the test output from `/tmp/heal-ci-state.json` and the last log file again
 
 | ID | Symptom | Root cause | Fix |
 |----|---------|-----------|-----|
-| **VCR** | `WebMock::NetConnectNotAllowedError` or `VCR::Errors::UnhandledHTTPRequestError` referencing `localhost` or `127.0.0.1` | VCR/WebMock blocks real HTTP to localhost | Add `c.allow_localhost = true` in the VCR configure block, or `WebMock.disable_net_connect!(allow_localhost: true)` in the test helper; delete stale cassette under `test/cassettes/` or `spec/cassettes/` |
+| **VCR** | `WebMock::NetConnectNotAllowedError` or `VCR::Errors::UnhandledHTTPRequestError` referencing `localhost` or `127.0.0.1` | VCR/WebMock blocks real HTTP to localhost | Add `c.allow_localhost = true` in the VCR configure block, or `WebMock.disable_net_connect!(allow_localhost: true)` in `test/test_helper.rb`; delete stale cassette under `test/cassettes/` |
 | **HEIGHT** | `Capybara::ElementNotFound` or assertion failure mentioning `height`, `min-height`, or `overflow` | CSS height constraint exceeds test viewport | Insert `page.driver.browser.manage.window.resize_to(1280, 900)` before the failing step; or fix the stylesheet value |
 | **BRAKEMAN** | Brakeman exits non-zero; message references `_before_action`, `skip_before_action`, or a custom filter | Hook metadata changed; false positive or real finding | False positive: add `# brakeman:ignore:WarningType -- reason` on the offending line; real: apply minimum security fix |
 | **CREDS** | `ActiveSupport::MessageEncryptor::InvalidMessage`, `key must be 32 bytes`, or `credentials` returning `nil` | `master.key` missing from the worktree | Copy from the primary worktree (see §Fix loop, CREDS) |
@@ -78,16 +78,16 @@ bin/worktree heal-reproduce "$PR" "<file>:<line>"
 REPRO_EXIT=$?
 ```
 
-- Reads the log at `/tmp/heal-ci-attempt-N.log`.
-- If `REPRO_EXIT=0`: the test already passes locally (flaky). Skip to **3e** with classification `FLAKY` and no file edit.
+- Runs `bin/rails test <file>:<line>` in the worktree.
+- If `REPRO_EXIT=0`: the test passes locally (flaky). Skip to **3e** with classification `FLAKY` and no file edit.
 
 ---
 
 **3d. Classify and fix**
 
-Read `/tmp/heal-ci-attempt-N.log` (path is in `state.json` as `last_log`). Match against the **Known failure playbook** above. Then edit exactly one file:
+Read the log at the path in `state.json` as `last_log`. Match against the **Known failure playbook** above. Then edit exactly one file:
 
-- **VCR**: Add `allow_localhost: true` / `disable_net_connect!(allow_localhost: true)` in the test helper, or delete the stale cassette file.
+- **VCR**: Add `allow_localhost: true` / `disable_net_connect!(allow_localhost: true)` in `test/test_helper.rb`, or delete the stale cassette under `test/cassettes/`.
 - **HEIGHT**: Insert `page.driver.browser.manage.window.resize_to(1280, 900)` before the failing step in the test file.
 - **BRAKEMAN**: Add `# brakeman:ignore:WarningType -- reason` on the offending line, or apply the minimum security fix.
 - **CREDS**: Copy the key from the primary worktree:

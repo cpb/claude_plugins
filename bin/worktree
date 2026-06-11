@@ -788,7 +788,7 @@ rescue JSON::ParserError => e
   exit 1
 end
 
-# Detect test framework, run the failing test, write result to state.json.
+# Run the failing test with bin/rails test, write result to state.json.
 # Exits 0 = test passes, 1 = test still failing.
 def cmd_heal_reproduce(args)
   pr = args.shift
@@ -803,30 +803,17 @@ def cmd_heal_reproduce(args)
   wt = branch && find_worktree(branch)
   wt_path = wt&.fetch(:path) || Dir.pwd
 
-  # Detect framework
-  framework = if File.exist?(File.join(wt_path, ".rspec")) || File.directory?(File.join(wt_path, "spec"))
-    "rspec"
-  else
-    "minitest"
-  end
-
   attempt = state["attempt"] || 0
   log_file = "/tmp/heal-ci-attempt-#{attempt}.log"
+  cmd = "bin/rails test #{test_ref.shellescape}"
 
-  cmd = if framework == "rspec"
-    "bundle exec rspec #{test_ref.shellescape} --format documentation"
-  else
-    "bin/rails test #{test_ref.shellescape}"
-  end
-
-  puts "→ [attempt #{attempt}] #{framework}: #{cmd}"
+  puts "→ [attempt #{attempt}] #{cmd}"
   output, status = Open3.capture2e("cd #{wt_path.shellescape} && #{cmd}")
   File.write(log_file, output)
   puts output
 
   passed = status.success?
   heal_write_state(state.merge(
-    "framework"   => framework,
     "wt_path"     => wt_path,
     "test_ref"    => test_ref,
     "last_log"    => log_file,
