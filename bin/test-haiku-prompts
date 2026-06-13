@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Regression detector for permission prompts in haiku skill runs.
+#
+# Runs each plugin skill against claude-haiku in non-interactive (-p) mode
+# from the test fixture and checks whether stdout contains permission-request
+# text. When haiku hits a blocked tool call in -p mode it prints the request
+# to stdout instead of blocking, making stdout parsing a reliable detector.
+#
+# Usage:
+#   bin/test-haiku-prompts              # test all skills
+#   bin/test-haiku-prompts start-pr     # test one or more named skills
+#
+# Exit: 0 if no permission prompts detected, 1 if any are found.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FIXTURE_DIR="$REPO_ROOT/test/fixtures/dummy-project"
+MODEL="claude-haiku-4-5-20251001"
+PLUGIN_PREFIX="cpb"
+TIMEOUT_SECS=60
+
+# Patterns emitted by Claude Code in -p mode when a tool call is blocked.
+PROMPT_PATTERN='requires permission|would you like to approve|needs.*permission|permission to use|I need.*permission|requires your permission|this tool.*blocked|blocked.*tool'
+
+# Build skill list: named args, or all *.md in commands/
+if [ $# -gt 0 ]; then
+  skills=("$@")
+else
+  skills=()
+  for f in "$REPO_ROOT/commands/"*.md; do
+    skills+=("$(basename "$f" .md)")
+  done
+fi
+
+failed=()
+
+printf 'Model:   %s\n' "$MODEL"
+printf 'Plugin:  %s\n' "$REPO_ROOT"
+printf 'Fixture: %s\n\n' "$FIXTURE_DIR"
+
+run_skill() {
+  local skill="$1"
+  # Use gtimeout (macOS coreutils) when available, fall back to plain execution.
+  local timeout_cmd=""
+  if command -v gtimeout &>/dev/null; then
+    timeout_cmd="gtimeout $TIMEOUT_SECS"
+  elif command -v timeout &>/dev/null; then
+    timeout_cmd="timeout $TIMEOUT_SECS"
+  fi
+
+  (
+    cd "$FIXTURE_DIR"
+    $timeout_cmd claude \
+      --model "$MODEL" \
+      --plugin-dir "$REPO_ROOT" \
+      -p "/$PLUGIN_PREFIX:$skill 1" \
+      2>&1
+  ) || true
+}
+
+for skill in "${skills[@]}"; do
+  printf '  /%-20s ' "$PLUGIN_PREFIX:$skill"
+  output="$(run_skill "$skill")"
+
+  if printf '%s' "$output" | grep -qiE "$PROMPT_PATTERN"; then
+    printf 'PERMISSION PROMPT DETECTED\n'
+    failed+=("$skill")
+  else
+    printf 'ok\n'
+  fi
+done
+
+printf '\n'
+if [ ${#failed[@]} -gt 0 ]; then
+  printf 'FAILED — %d skill(s) triggered permission prompts:\n' "${#failed[@]}"
+  for s in "${failed[@]}"; do
+    printf '  /%s:%s\n' "$PLUGIN_PREFIX" "$s"
+  done
+  exit 1
+else
+  printf 'PASSED — no permission prompts detected across %d skill(s).\n' "${#skills[@]}"
+  exit 0
+fi

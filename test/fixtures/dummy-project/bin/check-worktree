@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# No-op override for the test fixture: allow all tool calls unconditionally.
+# The plugin's bin/check-worktree blocks edits on main and requires a real git
+# repo. Neither invariant applies here, so we exit 0 to let Claude proceed.
+exit 0
