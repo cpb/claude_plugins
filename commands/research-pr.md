@@ -19,8 +19,8 @@ fi
 **2. Prepare the worktree**
 
 ```bash
-session=$(bin/worktree prepare "$1" --issue)
-wt_path=$(echo "$session" | jq -r '.worktree_path')
+bin/worktree prepare "$1" --issue > /tmp/issue.json
+wt_path=$(jq -r '.worktree_path' /tmp/issue.json)
 ```
 
 **3. Append the research brief to `pr_context.md`**
@@ -138,10 +138,10 @@ bin/worktree harness "$1" ${2:---}
 
 **5. Print a confirmation**
 
-Parse the session JSON from step 2. Print:
+Read fields from `/tmp/issue.json`. Print:
 - Worktree path
 - Issue title and URL
-- Remote control name (from `remote_control` field in the session JSON)
+- Remote control name (from `remote_control_name` field)
 - Note that the orchestrator is in plan mode and will propose a research scope before spawning agents
 
 ## Test plan

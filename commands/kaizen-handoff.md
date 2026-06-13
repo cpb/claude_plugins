@@ -10,15 +10,15 @@ Gather PR and git context via bin/worktree and synthesize a narrative handoff pr
 **1. Gather context**
 
 ```bash
-context_json=$(bin/worktree handoff $ARGUMENTS)
+bin/worktree handoff $ARGUMENTS > /tmp/handoff.json
 ```
 
 **2. Synthesize handoff**
 
 Use the following context to generate a high-quality, narrative handoff prompt:
 
-```json
-$context_json
+```bash
+cat /tmp/handoff.json
 ```
 
 The output must follow this narrative structure:
