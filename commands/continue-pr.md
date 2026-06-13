@@ -12,17 +12,10 @@ Set up an isolated worktree and launch a Claude (or Gemini if --gemini is specif
 ```bash
 if [ -z "$ARGUMENTS" ]; then echo "Usage: /continue-pr <pr-number> [--gemini]"; exit 1; fi
 
-bin/worktree prepare "$1" --pr > /tmp/pr.json
+bin/worktree prepare "$1" --pr
 ```
 
-Then read the fields you need:
-
-```bash
-jq -r '.title' /tmp/pr.json
-jq -r '.url' /tmp/pr.json
-jq -r '.remote_control_name' /tmp/pr.json
-jq -r '.hill_ready' /tmp/pr.json
-```
+Note the `title`, `url`, `remote_control`, and `hill_ready` from the JSON output.
 
 **2. Check for hill-ready gate**
 

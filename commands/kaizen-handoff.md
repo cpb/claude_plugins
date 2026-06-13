@@ -10,18 +10,12 @@ Gather PR and git context via bin/worktree and synthesize a narrative handoff pr
 **1. Gather context**
 
 ```bash
-bin/worktree handoff $ARGUMENTS > /tmp/handoff.json
+bin/worktree handoff $ARGUMENTS
 ```
 
 **2. Synthesize handoff**
 
-Use the following context to generate a high-quality, narrative handoff prompt:
-
-```bash
-cat /tmp/handoff.json
-```
-
-The output must follow this narrative structure:
+Using the JSON output from step 1, generate a high-quality, narrative handoff prompt following this structure:
 - "We're on branch [branch] accumulating fixes... [PR context]"
 - "What's landed so far ([count] commits ahead of main): [list of commits]"
 - "Key files: [list of modified files]"

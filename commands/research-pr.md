@@ -18,14 +18,7 @@ fi
 
 **2. Prepare the worktree**
 
-```bash
-bin/worktree prepare "$1" --issue > /tmp/issue.json
-wt_path=$(jq -r '.worktree_path' /tmp/issue.json)
-```
-
-**3. Append the research brief to `pr_context.md`**
-
-Append the following text verbatim to `"$wt_path/pr_context.md"` using `cat >>`:
+Write the following research brief to `/tmp/cpb-research-context.md`:
 
 ```
 ---
@@ -130,18 +123,26 @@ TOC. A broken link means an artifact is missing; an orphaned doc means planning
 coverage is incomplete.
 ```
 
-**4. Launch the harness**
+Then prepare the worktree with the research brief appended to `pr_context.md`:
+
+```bash
+bin/worktree prepare "$1" --issue --append-context-file /tmp/cpb-research-context.md
+```
+
+Note the `worktree_path`, `title`, `url`, and `remote_control` from the JSON output.
+
+**3. Launch the harness**
 
 ```bash
 bin/worktree harness "$1" ${2:---}
 ```
 
-**5. Print a confirmation**
+**4. Print a confirmation**
 
-Read fields from `/tmp/issue.json`. Print:
+Print:
 - Worktree path
 - Issue title and URL
-- Remote control name (from `remote_control_name` field)
+- Remote control name
 - Note that the orchestrator is in plan mode and will propose a research scope before spawning agents
 
 ## Test plan
