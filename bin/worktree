@@ -213,6 +213,10 @@ def cmd_prepare(args)
   is_pr = args.delete("--pr")
   is_issue = args.delete("--issue")
   test_first_arg = args.delete("--test-first")
+  append_context_file = if (idx = args.index("--append-context-file"))
+    args.delete_at(idx)
+    args.delete_at(idx)
+  end
 
   type = is_pr ? "pr" : (is_issue ? "issue" : nil)
 
@@ -279,6 +283,10 @@ def cmd_prepare(args)
   }
   File.write(File.join(wt_path, ".worktree-session.json"), JSON.pretty_generate(session))
   File.write(File.join(wt_path, "pr_context.md"), build_pr_context(type, info, test_first: test_first))
+
+  if append_context_file && File.exist?(append_context_file)
+    File.open(File.join(wt_path, "pr_context.md"), "a") { |f| f.write(File.read(append_context_file)) }
+  end
 
   puts JSON.pretty_generate(session.merge(info: info))
 end
