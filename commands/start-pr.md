@@ -12,20 +12,24 @@ Set up an isolated worktree and launch Claude (or Gemini if --gemini is specifie
 ```bash
 if [ -z "$ARGUMENTS" ]; then echo "Usage: /start-pr <issue-number> [--gemini]"; exit 1; fi
 
-session=$(bin/worktree prepare "$1" --issue)
-wt_path=$(echo "$session" | jq -r '.worktree_path')
-title=$(echo "$session" | jq -r '.title')
-url=$(echo "$session" | jq -r '.url')
-remote_control=$(echo "$session" | jq -r '.remote_control')
+bin/worktree prepare "$1" --issue > /tmp/issue.json
+```
+
+Then read the fields you need:
+
+```bash
+jq -r '.title' /tmp/issue.json
+jq -r '.url' /tmp/issue.json
+jq -r '.remote_control_name' /tmp/issue.json
 ```
 
 **2. Launch the harness**
 
 ```bash
-bin/worktree harness "$1" ${2:+$2}
+bin/worktree harness "$1" ${2:---}
 ```
 
 **3. Print a confirmation**
 
-Print a summary including the worktree path, issue title/URL, and the remote control name from `$remote_control`.
+Print a summary including the worktree path, issue title/URL, and the remote control name from the JSON.
 Mention that the agent is in plan mode.
