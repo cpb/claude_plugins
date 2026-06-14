@@ -12,7 +12,8 @@ Set up an isolated worktree and launch a Claude (or Gemini if --gemini is specif
 ```bash
 if [ -z "$ARGUMENTS" ]; then echo "Usage: /continue-pr <pr-number> [--gemini]"; exit 1; fi
 
-bin/worktree prepare "$1" --pr
+PR_NUMBER=$(echo "$ARGUMENTS" | awk '{print $1}')
+bin/worktree prepare "$PR_NUMBER" --pr
 ```
 
 Note the `title`, `url`, `remote_control`, and `hill_ready` from the JSON output.
@@ -38,7 +39,8 @@ Wait for the operator to remove the label, then confirm. Once gone, proceed.
 **3. Launch the harness**
 
 ```bash
-bin/worktree harness "$1" ${2:---}
+GEMINI_FLAG=$(echo "$ARGUMENTS" | grep -o '\-\-gemini' || true)
+bin/worktree harness "$PR_NUMBER" ${GEMINI_FLAG:---}
 ```
 
 **4. Print a confirmation**

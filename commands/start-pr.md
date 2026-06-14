@@ -12,7 +12,8 @@ Set up an isolated worktree and launch Claude (or Gemini if --gemini is specifie
 ```bash
 if [ -z "$ARGUMENTS" ]; then echo "Usage: /start-pr <issue-number> [--gemini]"; exit 1; fi
 
-bin/worktree prepare "$1" --issue
+ISSUE_NUMBER=$(echo "$ARGUMENTS" | awk '{print $1}')
+bin/worktree prepare "$ISSUE_NUMBER" --issue
 ```
 
 Note the `worktree_path`, `title`, `url`, and `remote_control` from the JSON output.
@@ -20,7 +21,8 @@ Note the `worktree_path`, `title`, `url`, and `remote_control` from the JSON out
 **2. Launch the harness**
 
 ```bash
-bin/worktree harness "$1" ${2:---}
+GEMINI_FLAG=$(echo "$ARGUMENTS" | grep -o '\-\-gemini' || true)
+bin/worktree harness "$ISSUE_NUMBER" ${GEMINI_FLAG:---}
 ```
 
 **3. Print a confirmation**
